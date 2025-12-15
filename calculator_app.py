@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd
 
 # --- 核心逻辑类 ---
 class FeeCalculator:
@@ -28,17 +27,17 @@ class FeeCalculator:
             "按年": (4000, None, 15000, 3000, 0.0003, 12000),
         }
 
-        # B. 市场次托管数据 (Market Sub-custody Data)
-        # 格式: "市场名": (托管费率bps, 单笔交易费USD)
+        # B. 市场数据 (Market Data)
+        # 格式: "市场名": (托管费率bps, 标准交易费USD, 优惠交易费USD)
         self.market_data = {
-            "不涉及/仅现金 (Cash only)": (0.0, 0),
-            "香港结算系统 (Hong Kong CCASS)": (0.9, 25),
-            "美国 (U.S.A)": (0.7, 20),
-            "欧洲清算系统 (Euroclear/Clearsteam)": (0.75, 20),
-            "香港债务工具 (CMU)": (0.9, 0),
-            "韩国 (South Korea)": (2.5, 0),
-            "港股通 (Hong Kong Stock Connect)": (2.5, 35),
-            "债券通 (Hong Kong Bond Connect)": (1.0, 0),
+            "不涉及/仅现金 (Cash only)": (0.0, 30, 20),
+            "香港结算系统 (Hong Kong CCASS)": (0.9, 25, 20),
+            "美国 (U.S.A)": (0.7, 20, 18),
+            "欧洲清算系统 (Euroclear/Clearsteam)": (0.75, 20, 18),
+            "港股通 (Hong Kong Stock Connect)": (2.5, 35, 30),
+            "债券通 (Hong Kong Bond Connect)": (1.0, 25, 20),
+            "香港债务工具 (CMU)": (0.9, 0, 0), # 未提供具体交易费，暂设为0
+            "韩国 (South Korea)": (2.5, 0, 0), # 未提供具体交易费，暂设为0
         }
 
     def get_quote(self, fund_type, is_complex, frequency, selected_markets):
@@ -53,21 +52,28 @@ class FeeCalculator:
 
         std_setup, std_rate, std_min, disc_setup, disc_rate, disc_min = row
         
-        # 2. 计算托管费 (逻辑：取所有选定市场中的最大费率)
+        # 2. 计算托管费 & 交易费
         if not selected_markets:
             max_custody_bps = 0
-            trans_fees_list = []
+            std_trans_list = []
+            disc_trans_list = []
         else:
-            # 提取费率列表
+            # 提取托管费率 (取最大值)
             rates = [self.market_data[m][0] for m in selected_markets]
             max_custody_bps = max(rates) if rates else 0
             
-            # 提取交易费列表 (只列出 > 0 的)
-            trans_fees_list = []
+            # 提取交易费 (分别处理标准和优惠)
+            std_trans_list = []
+            disc_trans_list = []
+            
             for m in selected_markets:
-                fee = self.market_data[m][1]
-                if fee > 0:
-                    trans_fees_list.append(f"${fee} ({m})")
+                # data format: (bps, std_fee, disc_fee)
+                _, std_fee, disc_fee = self.market_data[m]
+                
+                if std_fee > 0:
+                    std_trans_list.append(f"${std_fee} ({m})")
+                if disc_fee > 0:
+                    disc_trans_list.append(f"${disc_fee} ({m})")
         
         custody_rate = max_custody_bps / 10000
         
@@ -83,18 +89,18 @@ class FeeCalculator:
         return {
             "行政设立费": (fmt_money(std_setup), fmt_money(disc_setup)),
             "行政最低费": (fmt_money(std_min), fmt_money(disc_min)),
-            # 费率部分
             "行政费率": (fmt_rate(std_rate), fmt_rate(disc_rate)),
             "托管费率 (Max)": (fmt_rate(custody_rate), fmt_rate(custody_rate)),
             "-> 总预估费率": (sum_rate(std_rate, custody_rate), sum_rate(disc_rate, custody_rate)),
-            # 交易费字符串
-            "交易费明细": ", ".join(trans_fees_list) if trans_fees_list else "实报实销 / 无"
+            # 分别返回标准和优惠的交易费说明
+            "标准交易费明细": "<br>".join(std_trans_list) if std_trans_list else "实报实销 / 无",
+            "优惠交易费明细": "<br>".join(disc_trans_list) if disc_trans_list else "实报实销 / 无"
         }
 
 # --- Streamlit 界面代码 ---
-st.set_page_config(page_title="费用函计算器 V3", layout="centered")
+st.set_page_config(page_title="费用函计算器 V4", layout="centered")
 
-st.title("📊 基金报价计算器 (多市场版)")
+st.title("📊 基金报价计算器 (含交易费)")
 st.markdown("---")
 
 # 1. 侧边栏
@@ -110,14 +116,13 @@ with st.sidebar:
     st.header("2. 运营参数")
     frequency = st.selectbox("估值频率", ["按日", "按周", "按月", "按季度", "按半年", "按年"])
     
-    # 修改：多选市场
-    st.header("3. 投资市场 (取最高费率)")
+    # 3. 市场多选
+    st.header("3. 投资市场")
     calculator = FeeCalculator()
     market_list = list(calculator.market_data.keys())
-    # 默认选中第一个
-    selected_markets = st.multiselect("请选择拟投资市场", market_list, default=[market_list[0]])
+    selected_markets = st.multiselect("选择拟投资市场 (可多选)", market_list, default=[market_list[0]])
     
-    calc_btn = st.button("计算总报价", type="primary")
+    calc_btn = st.button("计算报价", type="primary")
 
 # 2. 主区域
 if calc_btn:
@@ -125,10 +130,8 @@ if calc_btn:
     
     if result:
         st.subheader(f"报价单：{fund_type} ({frequency})")
-        if selected_markets:
-            st.caption(f"已选市场：{', '.join(selected_markets)}")
         
-        # 手动构建 Markdown 表格 (避免 tabulate 依赖报错)
+        # 手动构建 Markdown 表格
         md_table = f"""
 | 项目 (Item) | 标准报价 (Standard) | 优惠报价 (Discount) |
 | :--- | :--- | :--- |
@@ -139,12 +142,12 @@ if calc_btn:
 | 4. 托管费率 (取最高) | {result['托管费率 (Max)'][0]} | {result['托管费率 (Max)'][1]} |
 | **👉 总预估费率** | **{result['-> 总预估费率'][0]}** | **{result['-> 总预估费率'][1]}** |
 | --- | --- | --- |
-| **5. 单笔交易费** | {result['交易费明细']} | {result['交易费明细']} |
+| **5. 单笔交易费** | {result['标准交易费明细']} | {result['优惠交易费明细']} |
 """
-        st.markdown(md_table)
+        st.markdown(md_table, unsafe_allow_html=True)
         
-        if len(selected_markets) > 1:
-            st.info(f"💡 提示：您选择了 {len(selected_markets)} 个市场，系统已自动按其中最高的费率 ({result['托管费率 (Max)'][0]}) 计入总成本。")
+        if len(selected_markets) > 0:
+            st.caption("注：交易费按市场分别列示；多个市场时托管费率取其中最高值计入总成本。")
             
     else:
         st.error(f"配置错误：{fund_type} 不支持 {frequency} 估值。")
