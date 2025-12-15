@@ -73,4 +73,80 @@ class FeeCalculator:
         
         # 格式化工具
         def fmt_rate(r): return f"{r*10000:.2f} bps" if r is not None else "N/A"
-        def fmt
+        def fmt_money(m): return f"${m:,}"
+        
+        # 计算总费率
+        def sum_rate(admin_r, cust_r):
+            if admin_r is None: return f"仅托管: {fmt_rate(cust_r)}"
+            return fmt_rate(admin_r + cust_r)
+
+        return {
+            "行政设立费": (fmt_money(std_setup), fmt_money(disc_setup)),
+            "行政最低费": (fmt_money(std_min), fmt_money(disc_min)),
+            # 费率部分
+            "行政费率": (fmt_rate(std_rate), fmt_rate(disc_rate)),
+            "托管费率 (Max)": (fmt_rate(custody_rate), fmt_rate(custody_rate)),
+            "-> 总预估费率": (sum_rate(std_rate, custody_rate), sum_rate(disc_rate, custody_rate)),
+            # 交易费字符串
+            "交易费明细": ", ".join(trans_fees_list) if trans_fees_list else "实报实销 / 无"
+        }
+
+# --- Streamlit 界面代码 ---
+st.set_page_config(page_title="费用函计算器 V3", layout="centered")
+
+st.title("📊 基金报价计算器 (多市场版)")
+st.markdown("---")
+
+# 1. 侧边栏
+with st.sidebar:
+    st.header("1. 基金结构")
+    fund_type = st.selectbox("基金类型", ["OFC", "SPC", "LPF"])
+    
+    is_complex = False
+    if fund_type != "LPF":
+        structure = st.radio("结构复杂度", ["普通结构", "多层复杂结构"])
+        is_complex = (structure == "多层复杂结构")
+    
+    st.header("2. 运营参数")
+    frequency = st.selectbox("估值频率", ["按日", "按周", "按月", "按季度", "按半年", "按年"])
+    
+    # 修改：多选市场
+    st.header("3. 投资市场 (取最高费率)")
+    calculator = FeeCalculator()
+    market_list = list(calculator.market_data.keys())
+    # 默认选中第一个
+    selected_markets = st.multiselect("请选择拟投资市场", market_list, default=[market_list[0]])
+    
+    calc_btn = st.button("计算总报价", type="primary")
+
+# 2. 主区域
+if calc_btn:
+    result = calculator.get_quote(fund_type, is_complex, frequency, selected_markets)
+    
+    if result:
+        st.subheader(f"报价单：{fund_type} ({frequency})")
+        if selected_markets:
+            st.caption(f"已选市场：{', '.join(selected_markets)}")
+        
+        # 手动构建 Markdown 表格 (避免 tabulate 依赖报错)
+        md_table = f"""
+| 项目 (Item) | 标准报价 (Standard) | 优惠报价 (Discount) |
+| :--- | :--- | :--- |
+| **1. 设立费** | {result['行政设立费'][0]} | {result['行政设立费'][1]} |
+| **2. 最低年费** | {result['行政最低费'][0]} | {result['行政最低费'][1]} |
+| --- | --- | --- |
+| 3. 行政费率 | {result['行政费率'][0]} | {result['行政费率'][1]} |
+| 4. 托管费率 (取最高) | {result['托管费率 (Max)'][0]} | {result['托管费率 (Max)'][1]} |
+| **👉 总预估费率** | **{result['-> 总预估费率'][0]}** | **{result['-> 总预估费率'][1]}** |
+| --- | --- | --- |
+| **5. 单笔交易费** | {result['交易费明细']} | {result['交易费明细']} |
+"""
+        st.markdown(md_table)
+        
+        if len(selected_markets) > 1:
+            st.info(f"💡 提示：您选择了 {len(selected_markets)} 个市场，系统已自动按其中最高的费率 ({result['托管费率 (Max)'][0]}) 计入总成本。")
+            
+    else:
+        st.error(f"配置错误：{fund_type} 不支持 {frequency} 估值。")
+else:
+    st.info("👈 请在左侧选择参数并点击计算")
