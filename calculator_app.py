@@ -29,6 +29,7 @@ class FeeCalculator:
         }
 
         # C. 市场数据 (Market Data)
+        # 格式: "市场名": (托管费率bps, 标准交易费USD, 优惠交易费USD)
         self.market_data = {
             "Cash Only (仅现金)": (0.0, 30, 20),
             "HK CCASS (香港结算)": (0.9, 25, 20),
@@ -36,7 +37,7 @@ class FeeCalculator:
             "Euroclear/Clearstream": (0.75, 20, 18),
             "HK Stock Connect (港股通)": (2.5, 35, 30),
             "HK Bond Connect (债券通)": (1.0, 25, 20),
-            "CMU (香港债务工具)": (0.9, 0, 0),
+            "CMU (香港债务工具)": (0.9, 25, 20), # [更新] 增加交易费
             "South Korea (韩国)": (2.5, 0, 0),
         }
 
@@ -82,7 +83,6 @@ class FeeCalculator:
                 row = self.data_lpf_standard[frequency]
                 std_setup, std_rate, std_min, disc_setup, disc_rate, disc_min = row
                 base_rate_name = "行政费率"
-                # 【修改点】传统 LPF 不涉及托管和交易
                 ignore_market_fees = True
 
         # C. OFC / SPC
@@ -122,9 +122,9 @@ class FeeCalculator:
 
         # 总费率显示逻辑
         def sum_rate(base_r, cust_r, ignore_market):
-            if ignore_market: return "不适用" # 场景3: 强制NA
+            if ignore_market: return "不适用" 
             
-            if base_r is None: # 场景2变种(如果有): 只有托管费
+            if base_r is None: 
                 if cust_r > 0: return f"仅托管: {fmt_rate(cust_r)}"
                 return "不适用"
             return fmt_rate(base_r + cust_r)
@@ -134,17 +134,14 @@ class FeeCalculator:
             "最低费": (fmt_money(std_min), fmt_money(disc_min)),
             "基础费率名": base_rate_name,
             "基础费率值": (fmt_rate(std_rate), fmt_rate(disc_rate)),
-            # 如果是传统LPF，这里显示不适用
             "托管费率": (fmt_custody_result(custody_rate, ignore_market_fees), fmt_custody_result(custody_rate, ignore_market_fees)),
-            # 总费率逻辑
             "-> 总费率": (sum_rate(std_rate, custody_rate, ignore_market_fees), sum_rate(disc_rate, custody_rate, ignore_market_fees)),
-            # 交易费逻辑
             "标准交易费": "<br>".join(std_trans_list) if std_trans_list else ("不适用" if ignore_market_fees else "实报实销 / 无"),
             "优惠交易费": "<br>".join(disc_trans_list) if disc_trans_list else ("不适用" if ignore_market_fees else "实报实销 / 无")
         }
 
 # --- Streamlit 界面代码 ---
-st.set_page_config(page_title="费用函计算器 V12", layout="centered")
+st.set_page_config(page_title="费用函计算器 V13", layout="centered")
 
 st.title("📊 基金报价计算器")
 st.markdown("---")
