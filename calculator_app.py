@@ -20,12 +20,13 @@ class FeeCalculator:
             "按半年": (5000, 0.0007, 3000, 4000, 0.0006, 2500),
             "按年": (5000, 0.0007, 2500, 4000, 0.0004, 2000),
         }
-        # LPF 数据
+        # LPF 数据 (更新：完全移除费率报价)
+        # 格式: (StdSetup, StdRate, StdMin, DiscSetup, DiscRate, DiscMin)
         self.data_lpf = {
-            "按月": (4000, None, 36000, 3000, 0.0003, 33000),
-            "按季度": (4000, None, 30000, 3000, 0.0003, 27000),
-            "按半年": (4000, None, 20000, 3000, 0.0003, 17000),
-            "按年": (4000, None, 15000, 3000, 0.0003, 12000),
+            "按月": (4000, None, 36000, 3000, None, 33000),
+            "按季度": (4000, None, 30000, 3000, None, 27000),
+            "按半年": (4000, None, 20000, 3000, None, 17000),
+            "按年": (4000, None, 15000, 3000, None, 12000),
         }
 
         # B. 市场数据 (Market Data)
@@ -44,15 +45,11 @@ class FeeCalculator:
     def get_quote(self, fund_type, is_complex, frequency, selected_markets):
         # --- 1. 基础费用计算逻辑 ---
         
-        # 纯托管逻辑 (Pure Custody)
+        # 纯托管逻辑
         if fund_type == "纯托管":
-            # 设立费: 1000 (Std) / 500 (Disc) [更新点]
             std_setup, disc_setup = 1000, 500
-            # 最低月费: 1000 (Std) / 500 (Disc) [更新点]
             std_min, disc_min = 1000, 500 
-            # 基础费率: 固定 3 bps
-            std_rate = 0.0003
-            disc_rate = 0.0003
+            std_rate, disc_rate = 0.0003, 0.0003
             
         # LPF 逻辑
         elif fund_type == "LPF":
@@ -89,13 +86,17 @@ class FeeCalculator:
         custody_rate = max_custody_bps / 10000
         
         # --- 3. 结果格式化 ---
-        def fmt_rate(r): return f"{r*10000:.2f} bps" if r is not None else "N/A"
-        def fmt_money(m): 
-            # 已移除 m==0 的特殊判断，因为纯托管现在有数值了
-            return f"${m:,}"
+        def fmt_rate(r): return f"{r*10000:.2f} bps" if r is not None else "不适用"
+        def fmt_money(m): return f"${m:,}"
         
+        # 总费率计算器
         def sum_rate(base_r, cust_r):
-            if base_r is None: return f"仅托管: {fmt_rate(cust_r)}"
+            # 如果没有行政费率 (LPF)，只显示托管费
+            if base_r is None: 
+                if cust_r > 0:
+                    return f"仅托管: {fmt_rate(cust_r)}"
+                else:
+                    return "不适用"
             return fmt_rate(base_r + cust_r)
 
         return {
@@ -110,7 +111,7 @@ class FeeCalculator:
         }
 
 # --- Streamlit 界面代码 ---
-st.set_page_config(page_title="费用函计算器 V8", layout="centered")
+st.set_page_config(page_title="费用函计算器 V9", layout="centered")
 
 st.title("📊 基金报价计算器")
 st.markdown("---")
@@ -128,6 +129,7 @@ with st.sidebar:
         st.info("ℹ️ 纯托管模式：包含最低月费，费率 = 3bps + 市场托管费")
     
     elif fund_type == "LPF":
+        st.info("ℹ️ LPF模式：无行政费率，仅收取固定年费 + 市场托管费(如有)")
         st.header("2. 运营参数")
         frequency = st.selectbox("估值频率", ["按月", "按季度", "按半年", "按年"])
         
@@ -218,6 +220,8 @@ if calc_btn:
         
         if fund_type == "纯托管":
             st.caption("注：纯托管模式费率结构为 3bps 基础费 + 市场次托管费。")
+        elif fund_type == "LPF":
+             st.caption("注：LPF 模式无基础行政费率（AUM 费），仅收取固定年费及潜在的市场托管费。")
         if len(selected_markets) > 1:
             st.caption("注：多个市场时，次托管费率取其中最高值计入总成本。")
 
