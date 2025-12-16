@@ -1,9 +1,18 @@
 import streamlit as st
+import os
 
-# --- 核心逻辑类 ---
+# --- 0. 页面配置 (必须是第一个 Streamlit 命令) ---
+st.set_page_config(
+    page_title="公司内部报价系统",  # 浏览器标签页标题
+    page_icon="🏢",               # 浏览器标签页图标 (可以用 emoji 或公司 icon 文件路径)
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
+
+# --- 核心逻辑类 (保持不变) ---
 class FeeCalculator:
     def __init__(self):
-        # A. OFC/SPC 行政费率 (普通 & 复杂)
+        # A. OFC/SPC 行政费率
         self.data_general = {
             "按日": (3000, 0.0011, 6000, 2000, 0.0009, 5000),
             "按周": (3000, 0.0008, 4000, 2000, 0.0007, 3500),
@@ -20,7 +29,7 @@ class FeeCalculator:
             "按半年": (5000, 0.0007, 3000, 4000, 0.0006, 2500),
             "按年": (5000, 0.0007, 2500, 4000, 0.0004, 2000),
         }
-        # B. 传统 LPF 数据 (设立费 & 最低费)
+        # B. 传统 LPF 数据
         self.data_lpf_standard = {
             "按月": (4000, None, 36000, 3000, None, 33000),
             "按季度": (4000, None, 30000, 3000, None, 27000),
@@ -28,8 +37,7 @@ class FeeCalculator:
             "按年": (4000, None, 15000, 3000, None, 12000),
         }
 
-        # C. 市场数据 (Market Data)
-        # 格式: "市场名": (托管费率bps, 标准交易费USD, 优惠交易费USD)
+        # C. 市场数据
         self.market_data = {
             "Cash Only (仅现金)": (0.0, 30, 20),
             "HK CCASS (香港结算)": (0.9, 25, 20),
@@ -44,31 +52,25 @@ class FeeCalculator:
     def get_quote(self, fund_type, is_complex, frequency, selected_markets, lpf_options=None):
         
         base_rate_name = "行政费率"
-        # 标志位：是否强制隐藏托管费率 (传统 LPF 用)
         hide_custody_rate = False
         
         # --- 1. 路由逻辑 ---
-        
-        # A. 纯托管 (Standalone)
         if fund_type == "纯托管":
             std_setup, disc_setup = 1000, 500
             std_min, disc_min = 1000, 500 
             std_rate, disc_rate = 0.0003, 0.0003
             base_rate_name = "基础托管费率 (3bps)"
 
-        # B. LPF 逻辑
         elif fund_type == "LPF":
             is_fund_shares = lpf_options.get('is_fund_shares', False)
             invest_secondary = lpf_options.get('invest_secondary', False)
 
-            # 场景 1: 以基金份额设立 -> 视为 OFC
             if is_fund_shares:
                 row = self.data_general.get(frequency)
                 if not row: return None
                 std_setup, std_rate, std_min, disc_setup, disc_rate, disc_min = row
                 base_rate_name = "行政费率 (类OFC)"
 
-            # 场景 2: 非份额 + 投二级市场 -> 混合模式
             elif invest_secondary:
                 if frequency not in self.data_lpf_standard: return None
                 row = self.data_lpf_standard[frequency]
@@ -76,16 +78,13 @@ class FeeCalculator:
                 std_rate, disc_rate = 0.0003, 0.0003
                 base_rate_name = "基础托管费率 (3bps)"
             
-            # 场景 3: 传统 LPF
             else:
                 if frequency not in self.data_lpf_standard: return None
                 row = self.data_lpf_standard[frequency]
                 std_setup, std_rate, std_min, disc_setup, disc_rate, disc_min = row
                 base_rate_name = "行政费率"
-                # 【修改点】传统 LPF：隐藏费率，但保留交易费计算
                 hide_custody_rate = True
 
-        # C. OFC / SPC
         else:
             data = self.data_complex if is_complex else self.data_general
             row = data.get(frequency)
@@ -114,14 +113,12 @@ class FeeCalculator:
         def fmt_rate(r): return f"{r*10000:.2f} bps" if r is not None else "不适用"
         def fmt_money(m): return f"${m:,}"
         
-        # 托管费显示逻辑
         def fmt_custody_result(rate, hide):
             if hide: return "不适用"
             return fmt_rate(rate)
 
-        # 总费率显示逻辑
         def sum_rate(base_r, cust_r, hide):
-            if hide: return "不适用" # 传统 LPF 强制 NA
+            if hide: return "不适用"
             if base_r is None: 
                 if cust_r > 0: return f"仅托管: {fmt_rate(cust_r)}"
                 return "不适用"
@@ -132,36 +129,36 @@ class FeeCalculator:
             "最低费": (fmt_money(std_min), fmt_money(disc_min)),
             "基础费率名": base_rate_name,
             "基础费率值": (fmt_rate(std_rate), fmt_rate(disc_rate)),
-            # 托管费率
             "托管费率": (fmt_custody_result(custody_rate, hide_custody_rate), fmt_custody_result(custody_rate, hide_custody_rate)),
-            # 总费率
             "-> 总费率": (sum_rate(std_rate, custody_rate, hide_custody_rate), sum_rate(disc_rate, custody_rate, hide_custody_rate)),
-            # 交易费 (始终显示，除非列表为空)
             "标准交易费": "<br>".join(std_trans_list) if std_trans_list else "实报实销 / 无",
             "优惠交易费": "<br>".join(disc_trans_list) if disc_trans_list else "实报实销 / 无"
         }
 
 # --- Streamlit 界面代码 ---
-st.set_page_config(page_title="费用函计算器 V14", layout="centered")
 
-st.title("📊 基金报价计算器")
-st.markdown("---")
-
-# 1. 侧边栏
+# 1. 侧边栏：加入公司 Logo 和品牌元素
 with st.sidebar:
+    # 尝试加载 Logo，如果文件不存在则不显示，防止报错
+    if os.path.exists("logo.png"):
+        st.image("logo.png", use_container_width=True)
+    else:
+        # 如果还没上传Logo，显示文字占位符 (上传后会自动消失)
+        st.header("Company Logo") 
+    
+    st.markdown("---")
+    
     st.header("1. 基金类型")
     fund_type = st.selectbox("选择类型", ["OFC", "SPC", "LPF", "纯托管"])
     
     is_complex = False
     frequency = "不适用"
     lpf_options = {}
-    # 定义完整市场列表
+    
     calculator = FeeCalculator()
     all_markets = list(calculator.market_data.keys())
-    # 定义传统 LPF 允许的市场白名单
     lpf_restricted_markets = ["Cash Only (仅现金)", "HK CCASS (香港结算)"]
     
-    # 动态逻辑
     is_traditional_lpf = False
     
     if fund_type == "纯托管":
@@ -179,15 +176,14 @@ with st.sidebar:
         
         st.header("2. 估值频率")
         if is_fund_shares:
-            st.caption("模式：类 OFC 计费 (行政费率 + 托管)")
+            st.caption("模式：类 OFC 计费")
             frequency = st.selectbox("估值频率", ["按日", "按周", "按月", "按季度", "按半年", "按年"])
         elif invest_secondary:
             st.caption("模式：混合计费 (LPF设立/最低费 + 3bps托管费)")
             frequency = st.selectbox("估值频率", ["按月", "按季度", "按半年", "按年"])
         else:
-            st.caption("模式：传统 LPF 计费 (仅固定年费 + 交易费)")
+            st.caption("模式：传统 LPF 计费")
             frequency = st.selectbox("估值频率", ["按月", "按季度", "按半年", "按年"])
-            # 标记为传统 LPF
             is_traditional_lpf = True
             
     else: # OFC / SPC
@@ -198,14 +194,12 @@ with st.sidebar:
     
     st.header("3. 投资市场")
     
-    # 根据是否是传统 LPF 动态调整可选市场
     if is_traditional_lpf:
         available_markets = lpf_restricted_markets
         st.caption("⚠️ 传统 LPF 模式仅支持 Cash Only 和 HK CCASS 市场。")
     else:
         available_markets = all_markets
         
-    # 默认选中逻辑
     default_mk = []
     if len(available_markets) > 0:
         if "HK CCASS (香港结算)" in available_markets:
@@ -215,9 +209,26 @@ with st.sidebar:
 
     selected_markets = st.multiselect("选择拟投资市场 (可多选)", available_markets, default=default_mk)
     
-    calc_btn = st.button("计算报价", type="primary")
+    st.markdown("---")
+    calc_btn = st.button("计算报价", type="primary", use_container_width=True)
+    
+    # 侧边栏底部版权
+    st.markdown(
+        """
+        <div style='text-align: center; color: grey; font-size: 12px; margin-top: 50px;'>
+            © 2024 Bank of communications trustee limited <br>
+            Internal Use Only
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # 2. 主区域
+st.title("📊 基金服务报价系统")
+
+# 内部使用警告条
+st.warning("🔒 内部机密工具 | 仅供公司员工使用 | 禁止对外发送截图")
+
 if calc_btn:
     result = calculator.get_quote(fund_type, is_complex, frequency, selected_markets, lpf_options)
     
@@ -297,13 +308,26 @@ if calc_btn:
             elif lpf_options.get('invest_secondary'):
                 st.caption("注：LPF (混合模式) - 设立费/最低费按 LPF 标准，费率按 3bps + 托管费计算。")
             else:
-                st.caption("注：传统 LPF - 仅收取固定年费及交易费，不适用资产规模费率。")
+                st.caption("注：传统 LPF - 仅收取固定年费及交易费。")
         
-        # 仅在非传统LPF模式下显示取高值提示
         if len(selected_markets) > 1 and not is_traditional_lpf:
             st.caption("注：多个市场时，次托管费率取其中最高值计入总成本。")
 
     else:
         st.error("计算失败，请检查参数设置。")
 else:
-    st.info("👈 请在左侧选择参数并点击计算")
+    st.info("👈 请在侧边栏配置参数")
+    st.markdown(
+        """
+        <div style='margin-top: 50px; padding: 20px; background-color: #f9f9f9; border-radius: 5px;'>
+            <h4 style='color: #666;'>使用说明</h4>
+            <ol style='color: #666; font-size: 14px;'>
+                <li>在左侧侧边栏选择基金类型及结构。</li>
+                <li>选择估值频率和拟投资市场。</li>
+                <li>点击“计算报价”按钮生成对比表。</li>
+                <li>本工具仅限公司内部员工使用，报价单不可直接发送给客户。</li>
+            </ol>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
