@@ -37,15 +37,15 @@ class FeeCalculator:
             "Euroclear/Clearstream": (0.75, 20, 18),
             "HK Stock Connect (港股通)": (2.5, 35, 30),
             "HK Bond Connect (债券通)": (1.0, 25, 20),
-            "CMU (香港债务工具)": (0.9, 25, 20), # [更新] 增加交易费
+            "CMU (香港债务工具)": (0.9, 25, 20),
             "South Korea (韩国)": (2.5, 0, 0),
         }
 
     def get_quote(self, fund_type, is_complex, frequency, selected_markets, lpf_options=None):
         
         base_rate_name = "行政费率"
-        # 标志位：是否忽略市场托管费 (默认为 False)
-        ignore_market_fees = False
+        # 标志位：是否强制隐藏托管费率 (传统 LPF 用)
+        hide_custody_rate = False
         
         # --- 1. 路由逻辑 ---
         
@@ -73,17 +73,17 @@ class FeeCalculator:
                 if frequency not in self.data_lpf_standard: return None
                 row = self.data_lpf_standard[frequency]
                 std_setup, _, std_min, disc_setup, _, disc_min = row
-                # 费率强制使用纯托管标准
                 std_rate, disc_rate = 0.0003, 0.0003
                 base_rate_name = "基础托管费率 (3bps)"
             
-            # 场景 3: 传统 LPF (无托管) -> 强制忽略市场费率
+            # 场景 3: 传统 LPF
             else:
                 if frequency not in self.data_lpf_standard: return None
                 row = self.data_lpf_standard[frequency]
                 std_setup, std_rate, std_min, disc_setup, disc_rate, disc_min = row
                 base_rate_name = "行政费率"
-                ignore_market_fees = True
+                # 【修改点】传统 LPF：隐藏费率，但保留交易费计算
+                hide_custody_rate = True
 
         # C. OFC / SPC
         else:
@@ -97,8 +97,7 @@ class FeeCalculator:
         std_trans_list = []
         disc_trans_list = []
 
-        # 只有在“不忽略”市场费用的情况下才计算
-        if selected_markets and not ignore_market_fees:
+        if selected_markets:
             rates = [self.market_data[m][0] for m in selected_markets]
             max_custody_bps = max(rates) if rates else 0
             
@@ -116,14 +115,13 @@ class FeeCalculator:
         def fmt_money(m): return f"${m:,}"
         
         # 托管费显示逻辑
-        def fmt_custody_result(rate, ignore):
-            if ignore: return "不适用"
+        def fmt_custody_result(rate, hide):
+            if hide: return "不适用"
             return fmt_rate(rate)
 
         # 总费率显示逻辑
-        def sum_rate(base_r, cust_r, ignore_market):
-            if ignore_market: return "不适用" 
-            
+        def sum_rate(base_r, cust_r, hide):
+            if hide: return "不适用" # 传统 LPF 强制 NA
             if base_r is None: 
                 if cust_r > 0: return f"仅托管: {fmt_rate(cust_r)}"
                 return "不适用"
@@ -134,14 +132,17 @@ class FeeCalculator:
             "最低费": (fmt_money(std_min), fmt_money(disc_min)),
             "基础费率名": base_rate_name,
             "基础费率值": (fmt_rate(std_rate), fmt_rate(disc_rate)),
-            "托管费率": (fmt_custody_result(custody_rate, ignore_market_fees), fmt_custody_result(custody_rate, ignore_market_fees)),
-            "-> 总费率": (sum_rate(std_rate, custody_rate, ignore_market_fees), sum_rate(disc_rate, custody_rate, ignore_market_fees)),
-            "标准交易费": "<br>".join(std_trans_list) if std_trans_list else ("不适用" if ignore_market_fees else "实报实销 / 无"),
-            "优惠交易费": "<br>".join(disc_trans_list) if disc_trans_list else ("不适用" if ignore_market_fees else "实报实销 / 无")
+            # 托管费率
+            "托管费率": (fmt_custody_result(custody_rate, hide_custody_rate), fmt_custody_result(custody_rate, hide_custody_rate)),
+            # 总费率
+            "-> 总费率": (sum_rate(std_rate, custody_rate, hide_custody_rate), sum_rate(disc_rate, custody_rate, hide_custody_rate)),
+            # 交易费 (始终显示，除非列表为空)
+            "标准交易费": "<br>".join(std_trans_list) if std_trans_list else "实报实销 / 无",
+            "优惠交易费": "<br>".join(disc_trans_list) if disc_trans_list else "实报实销 / 无"
         }
 
 # --- Streamlit 界面代码 ---
-st.set_page_config(page_title="费用函计算器 V13", layout="centered")
+st.set_page_config(page_title="费用函计算器 V14", layout="centered")
 
 st.title("📊 基金报价计算器")
 st.markdown("---")
@@ -154,8 +155,15 @@ with st.sidebar:
     is_complex = False
     frequency = "不适用"
     lpf_options = {}
+    # 定义完整市场列表
+    calculator = FeeCalculator()
+    all_markets = list(calculator.market_data.keys())
+    # 定义传统 LPF 允许的市场白名单
+    lpf_restricted_markets = ["Cash Only (仅现金)", "HK CCASS (香港结算)"]
     
     # 动态逻辑
+    is_traditional_lpf = False
+    
     if fund_type == "纯托管":
         st.info("ℹ️ 纯托管模式：包含最低月费，费率 = 3bps + 市场托管费")
     
@@ -177,8 +185,10 @@ with st.sidebar:
             st.caption("模式：混合计费 (LPF设立/最低费 + 3bps托管费)")
             frequency = st.selectbox("估值频率", ["按月", "按季度", "按半年", "按年"])
         else:
-            st.caption("模式：传统 LPF 计费 (仅固定年费)")
+            st.caption("模式：传统 LPF 计费 (仅固定年费 + 交易费)")
             frequency = st.selectbox("估值频率", ["按月", "按季度", "按半年", "按年"])
+            # 标记为传统 LPF
+            is_traditional_lpf = True
             
     else: # OFC / SPC
         st.header("2. 运营参数")
@@ -187,10 +197,23 @@ with st.sidebar:
         frequency = st.selectbox("估值频率", ["按日", "按周", "按月", "按季度", "按半年", "按年"])
     
     st.header("3. 投资市场")
-    calculator = FeeCalculator()
-    market_list = list(calculator.market_data.keys())
-    default_mk = [market_list[1]] if len(market_list) > 1 else []
-    selected_markets = st.multiselect("选择拟投资市场 (可多选)", market_list, default=default_mk)
+    
+    # 根据是否是传统 LPF 动态调整可选市场
+    if is_traditional_lpf:
+        available_markets = lpf_restricted_markets
+        st.caption("⚠️ 传统 LPF 模式仅支持 Cash Only 和 HK CCASS 市场。")
+    else:
+        available_markets = all_markets
+        
+    # 默认选中逻辑
+    default_mk = []
+    if len(available_markets) > 0:
+        if "HK CCASS (香港结算)" in available_markets:
+             default_mk = ["HK CCASS (香港结算)"]
+        else:
+             default_mk = [available_markets[0]]
+
+    selected_markets = st.multiselect("选择拟投资市场 (可多选)", available_markets, default=default_mk)
     
     calc_btn = st.button("计算报价", type="primary")
 
@@ -274,9 +297,10 @@ if calc_btn:
             elif lpf_options.get('invest_secondary'):
                 st.caption("注：LPF (混合模式) - 设立费/最低费按 LPF 标准，费率按 3bps + 托管费计算。")
             else:
-                st.caption("注：传统 LPF - 仅收取固定年费，不适用任何资产规模费率。")
+                st.caption("注：传统 LPF - 仅收取固定年费及交易费，不适用资产规模费率。")
         
-        if len(selected_markets) > 1 and not (fund_type == "LPF" and not lpf_options.get('invest_secondary') and not lpf_options.get('is_fund_shares')):
+        # 仅在非传统LPF模式下显示取高值提示
+        if len(selected_markets) > 1 and not is_traditional_lpf:
             st.caption("注：多个市场时，次托管费率取其中最高值计入总成本。")
 
     else:
