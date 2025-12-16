@@ -33,11 +33,11 @@ class FeeCalculator:
             "Cash Only (仅现金)": (0.0, 30, 20),
             "HK CCASS (香港结算)": (0.9, 25, 20),
             "USA (美国)": (0.7, 20, 18),
-            "Euroclear/Clearstream": (0.75, 20, 18),
+            "Euroclear/Clearsteam": (0.75, 20, 18),
             "HK Stock Connect (港股通)": (2.5, 35, 30),
             "HK Bond Connect (债券通)": (1.0, 25, 20),
-            "CMU (香港债务工具)": (0.9, 0, 0), # 暂无固定费用
-            "South Korea (韩国)": (2.5, 0, 0), # 暂无固定费用
+            "CMU (香港债务工具)": (0.9, 0, 0),
+            "South Korea (韩国)": (2.5, 0, 0),
         }
 
     def get_quote(self, fund_type, is_complex, frequency, selected_markets):
@@ -70,7 +70,7 @@ class FeeCalculator:
                 # data format: (bps, std_fee, disc_fee)
                 _, std_fee, disc_fee = self.market_data[m]
                 
-                # 格式修改为：市场名: 金额
+                # 格式修改为：市场名: $金额
                 if std_fee > 0:
                     std_trans_list.append(f"{m}: ${std_fee}")
                 if disc_fee > 0:
@@ -94,13 +94,13 @@ class FeeCalculator:
             "托管费率 (Max)": (fmt_rate(custody_rate), fmt_rate(custody_rate)),
             "-> 总预估费率": (sum_rate(std_rate, custody_rate), sum_rate(disc_rate, custody_rate)),
             
-            # 使用 <br> 换行拼接
-            "标准交易费明细": "<br>".join(std_trans_list) if std_trans_list else "实报实销 / 无",
-            "优惠交易费明细": "<br>".join(disc_trans_list) if disc_trans_list else "实报实销 / 无"
+            # 修改点：使用分号拼接，避免 <br> 乱码
+            "标准交易费明细": "; ".join(std_trans_list) if std_trans_list else "实报实销 / 无",
+            "优惠交易费明细": "; ".join(disc_trans_list) if disc_trans_list else "实报实销 / 无"
         }
 
 # --- Streamlit 界面代码 ---
-st.set_page_config(page_title="费用函计算器 V5", layout="centered")
+st.set_page_config(page_title="费用函计算器 V5.1", layout="centered")
 
 st.title("📊 基金报价计算器")
 st.markdown("---")
