@@ -33,7 +33,7 @@ class FeeCalculator:
             "Cash Only (仅现金)": (0.0, 30, 20),
             "HK CCASS (香港结算)": (0.9, 25, 20),
             "USA (美国)": (0.7, 20, 18),
-            "Euroclear/Clearsteam": (0.75, 20, 18),
+            "Euroclear/Clearstream": (0.75, 20, 18),
             "HK Stock Connect (港股通)": (2.5, 35, 30),
             "HK Bond Connect (债券通)": (1.0, 25, 20),
             "CMU (香港债务工具)": (0.9, 0, 0),
@@ -41,7 +41,6 @@ class FeeCalculator:
         }
 
     def get_quote(self, fund_type, is_complex, frequency, selected_markets):
-        # 1. 获取行政管理费
         if fund_type == "LPF":
             if frequency not in self.data_lpf: return None
             row = self.data_lpf[frequency]
@@ -52,37 +51,31 @@ class FeeCalculator:
 
         std_setup, std_rate, std_min, disc_setup, disc_rate, disc_min = row
         
-        # 2. 计算托管费 & 交易费
+        # 计算托管费 & 交易费
         if not selected_markets:
             max_custody_bps = 0
             std_trans_list = []
             disc_trans_list = []
         else:
-            # 提取托管费率 (取最大值)
             rates = [self.market_data[m][0] for m in selected_markets]
             max_custody_bps = max(rates) if rates else 0
             
-            # 提取交易费
             std_trans_list = []
             disc_trans_list = []
             
             for m in selected_markets:
-                # data format: (bps, std_fee, disc_fee)
                 _, std_fee, disc_fee = self.market_data[m]
-                
-                # 格式修改为：市场名: $金额
+                # 格式：市场名: $金额
                 if std_fee > 0:
-                    std_trans_list.append(f"{m}: ${std_fee}")
+                    std_trans_list.append(f"• {m}: ${std_fee}")
                 if disc_fee > 0:
-                    disc_trans_list.append(f"{m}: ${disc_fee}")
+                    disc_trans_list.append(f"• {m}: ${disc_fee}")
         
         custody_rate = max_custody_bps / 10000
         
-        # 格式化工具
         def fmt_rate(r): return f"{r*10000:.2f} bps" if r is not None else "N/A"
         def fmt_money(m): return f"${m:,}"
         
-        # 计算总费率
         def sum_rate(admin_r, cust_r):
             if admin_r is None: return f"仅托管: {fmt_rate(cust_r)}"
             return fmt_rate(admin_r + cust_r)
@@ -93,14 +86,13 @@ class FeeCalculator:
             "行政费率": (fmt_rate(std_rate), fmt_rate(disc_rate)),
             "托管费率 (Max)": (fmt_rate(custody_rate), fmt_rate(custody_rate)),
             "-> 总预估费率": (sum_rate(std_rate, custody_rate), sum_rate(disc_rate, custody_rate)),
-            
-            # 修改点：使用分号拼接，避免 <br> 乱码
-            "标准交易费明细": "; ".join(std_trans_list) if std_trans_list else "实报实销 / 无",
-            "优惠交易费明细": "; ".join(disc_trans_list) if disc_trans_list else "实报实销 / 无"
+            # 使用 <br> 连接，但在 HTML 表格中这是合法的
+            "标准交易费明细": "<br>".join(std_trans_list) if std_trans_list else "实报实销 / 无",
+            "优惠交易费明细": "<br>".join(disc_trans_list) if disc_trans_list else "实报实销 / 无"
         }
 
 # --- Streamlit 界面代码 ---
-st.set_page_config(page_title="费用函计算器 V5.1", layout="centered")
+st.set_page_config(page_title="费用函计算器 V6", layout="centered")
 
 st.title("📊 基金报价计算器")
 st.markdown("---")
@@ -122,7 +114,7 @@ with st.sidebar:
     st.header("3. 投资市场")
     calculator = FeeCalculator()
     market_list = list(calculator.market_data.keys())
-    selected_markets = st.multiselect("选择拟投资市场 (可多选)", market_list, default=[market_list[1]]) # 默认 HK CCASS
+    selected_markets = st.multiselect("选择拟投资市场 (可多选)", market_list, default=[market_list[1]])
     
     calc_btn = st.button("计算报价", type="primary")
 
@@ -133,20 +125,79 @@ if calc_btn:
     if result:
         st.subheader(f"报价单：{fund_type} ({frequency})")
         
-        # 构建表格
-        md_table = f"""
-| 项目 (Item) | 标准报价 (Standard) | 优惠报价 (Discount) |
-| :--- | :--- | :--- |
-| **1. 设立费** | {result['行政设立费'][0]} | {result['行政设立费'][1]} |
-| **2. 最低年费** | {result['行政最低费'][0]} | {result['行政最低费'][1]} |
-| --- | --- | --- |
-| 3. 行政费率 | {result['行政费率'][0]} | {result['行政费率'][1]} |
-| 4. 托管费率 (取最高) | {result['托管费率 (Max)'][0]} | {result['托管费率 (Max)'][1]} |
-| **👉 总预估费率** | **{result['-> 总预估费率'][0]}** | **{result['-> 总预估费率'][1]}** |
-| --- | --- | --- |
-| **5. 单笔交易费** | {result['标准交易费明细']} | {result['优惠交易费明细']} |
-"""
-        st.markdown(md_table, unsafe_allow_html=True)
+        # 使用 HTML 构建表格，完美支持 <br> 换行
+        html_table = f"""
+        <style>
+            table.quote-table {{
+                width: 100%;
+                border-collapse: collapse;
+                font-family: sans-serif;
+            }}
+            table.quote-table th, table.quote-table td {{
+                border: 1px solid #ddd;
+                padding: 10px;
+                text-align: left;
+                vertical-align: top; /* 确保多行内容顶部对齐 */
+            }}
+            table.quote-table th {{
+                background-color: #f0f2f6;
+                color: #31333F;
+            }}
+            .highlight {{
+                font-weight: bold;
+                color: #0f52ba;
+            }}
+        </style>
+
+        <table class="quote-table">
+            <thead>
+                <tr>
+                    <th style="width:30%">项目 (Item)</th>
+                    <th style="width:35%">标准报价 (Standard)</th>
+                    <th style="width:35%">优惠报价 (Discount)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>1. 设立费</strong></td>
+                    <td>{result['行政设立费'][0]}</td>
+                    <td>{result['行政设立费'][1]}</td>
+                </tr>
+                <tr>
+                    <td><strong>2. 最低年费</strong></td>
+                    <td>{result['行政最低费'][0]}</td>
+                    <td>{result['行政最低费'][1]}</td>
+                </tr>
+                <tr>
+                    <td colspan="3" style="background-color: #fafafa; height: 5px; padding:0;"></td>
+                </tr>
+                <tr>
+                    <td>3. 行政费率</td>
+                    <td>{result['行政费率'][0]}</td>
+                    <td>{result['行政费率'][1]}</td>
+                </tr>
+                <tr>
+                    <td>4. 托管费率 (取最高)</td>
+                    <td>{result['托管费率 (Max)'][0]}</td>
+                    <td>{result['托管费率 (Max)'][1]}</td>
+                </tr>
+                <tr>
+                    <td><strong class="highlight">👉 总预估费率</strong></td>
+                    <td><strong class="highlight">{result['-> 总预估费率'][0]}</strong></td>
+                    <td><strong class="highlight">{result['-> 总预估费率'][1]}</strong></td>
+                </tr>
+                <tr>
+                    <td colspan="3" style="background-color: #fafafa; height: 5px; padding:0;"></td>
+                </tr>
+                <tr>
+                    <td><strong>5. 单笔交易费</strong></td>
+                    <td>{result['标准交易费明细']}</td>
+                    <td>{result['优惠交易费明细']}</td>
+                </tr>
+            </tbody>
+        </table>
+        """
+        st.markdown(html_table, unsafe_allow_html=True)
         
         if len(selected_markets) > 0:
             st.caption("注：交易费按市场分别列示；多个市场时托管费率取其中最高值计入总成本。")
