@@ -46,10 +46,10 @@ class FeeCalculator:
         
         # 纯托管逻辑 (Pure Custody)
         if fund_type == "纯托管":
-            # 设立费: 1000 (Std) / 800 (Disc)
-            std_setup, disc_setup = 1000, 800
-            # 最低费: 用户未指定，暂设为 N/A
-            std_min, disc_min = 0, 0 
+            # 设立费: 1000 (Std) / 500 (Disc) [更新点]
+            std_setup, disc_setup = 1000, 500
+            # 最低月费: 1000 (Std) / 500 (Disc) [更新点]
+            std_min, disc_min = 1000, 500 
             # 基础费率: 固定 3 bps
             std_rate = 0.0003
             disc_rate = 0.0003
@@ -73,11 +73,9 @@ class FeeCalculator:
             std_trans_list = []
             disc_trans_list = []
         else:
-            # 提取托管费率 (取最大值)
             rates = [self.market_data[m][0] for m in selected_markets]
             max_custody_bps = max(rates) if rates else 0
             
-            # 提取交易费
             std_trans_list = []
             disc_trans_list = []
             
@@ -93,10 +91,9 @@ class FeeCalculator:
         # --- 3. 结果格式化 ---
         def fmt_rate(r): return f"{r*10000:.2f} bps" if r is not None else "N/A"
         def fmt_money(m): 
-            if m == 0: return "N/A" # 针对纯托管最低费
+            # 已移除 m==0 的特殊判断，因为纯托管现在有数值了
             return f"${m:,}"
         
-        # 总费率计算器
         def sum_rate(base_r, cust_r):
             if base_r is None: return f"仅托管: {fmt_rate(cust_r)}"
             return fmt_rate(base_r + cust_r)
@@ -104,7 +101,6 @@ class FeeCalculator:
         return {
             "设立费": (fmt_money(std_setup), fmt_money(disc_setup)),
             "最低费": (fmt_money(std_min), fmt_money(disc_min)),
-            # 如果是纯托管，显示"基础费率"，否则显示"行政费率"
             "基础费率名": "基础托管费率 (3bps)" if fund_type == "纯托管" else "行政费率",
             "基础费率值": (fmt_rate(std_rate), fmt_rate(disc_rate)),
             "托管费率": (fmt_rate(custody_rate), fmt_rate(custody_rate)),
@@ -114,7 +110,7 @@ class FeeCalculator:
         }
 
 # --- Streamlit 界面代码 ---
-st.set_page_config(page_title="费用函计算器 V7", layout="centered")
+st.set_page_config(page_title="费用函计算器 V8", layout="centered")
 
 st.title("📊 基金报价计算器")
 st.markdown("---")
@@ -122,15 +118,14 @@ st.markdown("---")
 # 1. 侧边栏
 with st.sidebar:
     st.header("1. 基金类型")
-    # 新增 "纯托管" 选项
     fund_type = st.selectbox("选择类型", ["OFC", "SPC", "LPF", "纯托管"])
     
     is_complex = False
-    frequency = "不适用" # 默认值
+    frequency = "不适用"
     
-    # 动态显示控件：纯托管不需要选结构和频率
+    # 动态显示控件
     if fund_type == "纯托管":
-        st.info("ℹ️ 纯托管模式：无需估值，费率 = 3bps + 市场托管费")
+        st.info("ℹ️ 纯托管模式：包含最低月费，费率 = 3bps + 市场托管费")
     
     elif fund_type == "LPF":
         st.header("2. 运营参数")
@@ -145,7 +140,6 @@ with st.sidebar:
     st.header("3. 投资市场")
     calculator = FeeCalculator()
     market_list = list(calculator.market_data.keys())
-    # 默认选中一个
     default_mk = [market_list[1]] if len(market_list) > 1 else []
     selected_markets = st.multiselect("选择拟投资市场 (可多选)", market_list, default=default_mk)
     
@@ -153,11 +147,9 @@ with st.sidebar:
 
 # 2. 主区域
 if calc_btn:
-    # 调用计算
     result = calculator.get_quote(fund_type, is_complex, frequency, selected_markets)
     
     if result:
-        # 标题动态展示
         title_suffix = "" if fund_type == "纯托管" else f" ({frequency})"
         st.subheader(f"报价单：{fund_type}{title_suffix}")
         
@@ -224,7 +216,6 @@ if calc_btn:
         """
         st.markdown(html_table, unsafe_allow_html=True)
         
-        # 备注
         if fund_type == "纯托管":
             st.caption("注：纯托管模式费率结构为 3bps 基础费 + 市场次托管费。")
         if len(selected_markets) > 1:
